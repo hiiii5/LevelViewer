@@ -6,3 +6,4 @@ LevelViewer/build
 
 # Ignore pure ref files for concept, this will no longer change.
 *.pur
+*.blend1
