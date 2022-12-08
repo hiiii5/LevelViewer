@@ -1,6 +1,7 @@
-// minimalistic code to draw a single triangle, this is not part of the API.
-// TODO: Part 1b
 #include "FSLogo.h"
+#include "h2bParser.h"
+#include "Mesh.h"
+#include "build/ShaderParser.h"
 
 #include "shaderc/shaderc.h" // needed for compiling shaders at runtime
 #ifdef _WIN32 // must use MT platform DLL libraries on windows
@@ -8,26 +9,13 @@
 #endif
 // Simple Vertex Shader
 
-std::string ShaderAsString(const char* ShaderFilePath) {
-	std::string output;
-	unsigned int stringLength = 0;
-	GW::SYSTEM::GFile file; file.Create();
-	file.GetFileSize(ShaderFilePath, stringLength);
-	if (stringLength && +file.OpenBinaryRead(ShaderFilePath)) {
-		output.resize(stringLength);
-		file.Read(&output[0], stringLength);
-	}
-	else
-		std::cout << "ERROR: Shader Source File \"" << ShaderFilePath << "\" Not Found!" << std::endl;
-	return output;
-}
 
 // Creation, Rendering & Cleanup
 class Renderer {
 	// TODO: Part 2b
 	#define MAX_SUBMESH_PER_DRAW 1024
 	struct SHADER_MODEL_DATA {
-		GW::MATH::GVECTORF sunDirection, sunColor;
+		GW::MATH::GVECTORF sunDirection, sunColor, eyePos;
 		GW::MATH::GMATRIXF viewMatrix, projectionMatrix;
 		GW::MATH::GMATRIXF matricies[MAX_SUBMESH_PER_DRAW];
 		OBJ_ATTRIBUTES attributes[MAX_SUBMESH_PER_DRAW];
@@ -62,6 +50,7 @@ class Renderer {
 	// TODO: Part 4f
 
 	// TODO: Part 2a
+	GW::MATH::GMATRIXF rotatingMatrix{};
 	// TODO: Part 2b
 	SHADER_MODEL_DATA instanceData{};
 
@@ -74,26 +63,20 @@ public:
 		unsigned int width, height;
 		win.GetClientWidth(width);
 		win.GetClientHeight(height);
-		// TODO: Part 2a
-		// TODO: Part 2b
-		// TODO: Part 4g
-		// TODO: part 3b
-		//GW::MATH::GMATRIXF worldMatrix;
-		//GW::MATH::GMatrix::IdentityF(worldMatrix);
+
 		instanceData.matricies[0] = GW::MATH::GIdentityMatrixF;
+		rotatingMatrix = GW::MATH::GIdentityMatrixF;
+		instanceData.matricies[1] = rotatingMatrix;
 
 		instanceData.viewMatrix = GW::MATH::GIdentityMatrixF;
-		GW::MATH::GVECTORF camPos = { 0.75f, 0.25f, -1.5f };
+		instanceData.eyePos = { 0.75f, 0.25f, -1.5f };
 		GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f };
 
-		GW::MATH::GMatrix::TranslateGlobalF(instanceData.viewMatrix, camPos, instanceData.viewMatrix);
+		GW::MATH::GMatrix::TranslateGlobalF(instanceData.viewMatrix, instanceData.eyePos, instanceData.viewMatrix);
 
 		GW::MATH::GVECTORF lookAtPos{ 0.15f, 0.75f, 0.0f };
 
-		GW::MATH::GMatrix::LookAtLHF(camPos, lookAtPos, up, instanceData.viewMatrix);
-
-		GW::MATH::GMatrix::TransposeF(instanceData.viewMatrix, instanceData.matricies[1]);
-		GW::MATH::GMatrix::InverseF(instanceData.matricies[1], instanceData.matricies[1]);
+		GW::MATH::GMatrix::LookAtLHF(instanceData.eyePos, lookAtPos, up, instanceData.viewMatrix);
 
 		float aspectRatio;
 		vlk.GetAspectRatio(aspectRatio);
@@ -104,16 +87,18 @@ public:
 
 		instanceData.sunColor = {0.9f, 0.9f, 1.0f, 1.0f};
 		instanceData.sunDirection = {-1, -1, 2};
+		GW::MATH::GVector::NormalizeF(instanceData.sunDirection, instanceData.sunDirection);
 
 		/***************** GEOMETRY INTIALIZATION ******************/
 		// Grab the device & physical device so we can allocate some stuff
 		VkPhysicalDevice physicalDevice = nullptr;
 		vlk.GetDevice((void**)&device);
 		vlk.GetPhysicalDevice((void**)&physicalDevice);
-
-		// TODO: Part 1c
+		
 		// Create Vertex Buffer
-		//float verts[] = 
+		Mesh* test = new Mesh("../test.h2b");
+		delete test;
+		
 		// Transfer triangle data to the vertex buffer. (staging would be prefered here)
 		GvkHelper::create_buffer(physicalDevice, device, sizeof(OBJ_VERT) * FSLogo_vertexcount,
 								 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -148,7 +133,7 @@ public:
 		shaderc_compile_options_set_generate_debug_info(options);
 #endif
 		// Create Vertex Shader
-		std::string vsShader = ShaderAsString("../vs.hlsl");
+		std::string vsShader = ShaderParser::ShaderAsString("../vs.hlsl");
 		shaderc_compilation_result_t result = shaderc_compile_into_spv( // compile
 			compiler, vsShader.c_str(), strlen(vsShader.c_str()),
 			shaderc_vertex_shader, "main.vert", "main", options);
@@ -158,7 +143,7 @@ public:
 										(char*)shaderc_result_get_bytes(result), &vertexShader);
 		shaderc_result_release(result); // done
 		// Create Pixel Shader
-		std::string psShader = ShaderAsString("../ps.hlsl");
+		std::string psShader = ShaderParser::ShaderAsString("../ps.hlsl");
 		result = shaderc_compile_into_spv( // compile
 			compiler, psShader.c_str(), strlen(psShader.c_str()),
 			shaderc_fragment_shader, "main.frag", "main", options);
@@ -176,22 +161,25 @@ public:
 		VkRenderPass renderPass;
 		vlk.GetRenderPass((void**)&renderPass);
 		VkPipelineShaderStageCreateInfo stage_create_info[2] = {};
+
 		// Create Stage Info for Vertex Shader
 		stage_create_info[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		stage_create_info[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
 		stage_create_info[0].module = vertexShader;
 		stage_create_info[0].pName = "main";
+
 		// Create Stage Info for Fragment Shader
 		stage_create_info[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		stage_create_info[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 		stage_create_info[1].module = pixelShader;
 		stage_create_info[1].pName = "main";
+
 		// Assembly State
 		VkPipelineInputAssemblyStateCreateInfo assembly_create_info = {};
 		assembly_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
 		assembly_create_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 		assembly_create_info.primitiveRestartEnable = false;
-		// TODO: Part 1e
+
 		// Vertex Input State
 		VkVertexInputBindingDescription vertex_binding_description = {};
 		vertex_binding_description.binding = 0;
@@ -199,19 +187,22 @@ public:
 		vertex_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 		VkVertexInputAttributeDescription vertex_attribute_description[3] = {
 			{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}, //uv, normal, etc....
-			{1, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
-			{2, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}
+			{1, 0, VK_FORMAT_R32G32B32_SFLOAT, 12},
+			{2, 0, VK_FORMAT_R32G32B32_SFLOAT, 24}
 		};
+
 		VkPipelineVertexInputStateCreateInfo input_vertex_info = {};
 		input_vertex_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		input_vertex_info.vertexBindingDescriptionCount = 1;
 		input_vertex_info.pVertexBindingDescriptions = &vertex_binding_description;
 		input_vertex_info.vertexAttributeDescriptionCount = 3;
 		input_vertex_info.pVertexAttributeDescriptions = vertex_attribute_description;
+
 		// Viewport State (we still need to set this up even though we will overwrite the values)
 		VkViewport viewport = {
 			0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
 		};
+
 		VkRect2D scissor = {{0, 0}, {width, height}};
 		VkPipelineViewportStateCreateInfo viewport_create_info = {};
 		viewport_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -219,6 +210,7 @@ public:
 		viewport_create_info.pViewports = &viewport;
 		viewport_create_info.scissorCount = 1;
 		viewport_create_info.pScissors = &scissor;
+
 		// Rasterizer State
 		VkPipelineRasterizationStateCreateInfo rasterization_create_info = {};
 		rasterization_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -232,6 +224,7 @@ public:
 		rasterization_create_info.depthBiasClamp = 0.0f;
 		rasterization_create_info.depthBiasConstantFactor = 0.0f;
 		rasterization_create_info.depthBiasSlopeFactor = 0.0f;
+
 		// Multisampling State
 		VkPipelineMultisampleStateCreateInfo multisample_create_info = {};
 		multisample_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -241,6 +234,7 @@ public:
 		multisample_create_info.pSampleMask = VK_NULL_HANDLE;
 		multisample_create_info.alphaToCoverageEnable = VK_FALSE;
 		multisample_create_info.alphaToOneEnable = VK_FALSE;
+
 		// Depth-Stencil State
 		VkPipelineDepthStencilStateCreateInfo depth_stencil_create_info = {};
 		depth_stencil_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -251,6 +245,7 @@ public:
 		depth_stencil_create_info.minDepthBounds = 0.0f;
 		depth_stencil_create_info.maxDepthBounds = 1.0f;
 		depth_stencil_create_info.stencilTestEnable = VK_FALSE;
+
 		// Color Blending Attachment & State
 		VkPipelineColorBlendAttachmentState color_blend_attachment_state = {};
 		color_blend_attachment_state.colorWriteMask = 0xF;
@@ -261,6 +256,7 @@ public:
 		color_blend_attachment_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 		color_blend_attachment_state.dstAlphaBlendFactor = VK_BLEND_FACTOR_DST_ALPHA;
 		color_blend_attachment_state.alphaBlendOp = VK_BLEND_OP_ADD;
+
 		VkPipelineColorBlendStateCreateInfo color_blend_create_info = {};
 		color_blend_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 		color_blend_create_info.logicOpEnable = VK_FALSE;
@@ -271,6 +267,7 @@ public:
 		color_blend_create_info.blendConstants[1] = 0.0f;
 		color_blend_create_info.blendConstants[2] = 0.0f;
 		color_blend_create_info.blendConstants[3] = 0.0f;
+
 		// Dynamic State 
 		VkDynamicState dynamic_state[2] = {
 			// By setting these we do not need to re-create the pipeline on Resize
@@ -281,7 +278,6 @@ public:
 		dynamic_create_info.dynamicStateCount = 2;
 		dynamic_create_info.pDynamicStates = dynamic_state;
 
-		// TODO: Part 2e
 		VkDescriptorSetLayoutBinding descriptorLayoutBinding{};
 		descriptorLayoutBinding.binding = 0;
 		descriptorLayoutBinding.descriptorCount = 1;
@@ -297,7 +293,6 @@ public:
 		descriptorCreateInfo.pNext = nullptr;
 		vkCreateDescriptorSetLayout(device, &descriptorCreateInfo, nullptr, &descriptorLayout);
 
-		// TODO: Part 2f
 		VkDescriptorPoolCreateInfo poolCreateInfo{};
 		poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		VkDescriptorPoolSize poolSize{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, maxFrames};
@@ -307,8 +302,7 @@ public:
 		poolCreateInfo.flags = 0;
 		poolCreateInfo.pNext = nullptr;
 		vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &descriptorPool);
-		// TODO: Part 4f
-		// TODO: Part 2g
+
 		VkDescriptorSetAllocateInfo allocateInfo{};
 		allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocateInfo.descriptorSetCount = 1;
@@ -320,8 +314,6 @@ public:
 			vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet[i]);
 		}
 
-		// TODO: Part 4f
-		// TODO: Part 2h
 		VkWriteDescriptorSet shaderWriteDescriptorSet{};
 		shaderWriteDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		shaderWriteDescriptorSet.descriptorCount = 1;
@@ -335,20 +327,18 @@ public:
 			vkUpdateDescriptorSets(device, 1, &shaderWriteDescriptorSet, 0, nullptr);
 		}
 
-		// TODO: Part 4f
-
 		// Descriptor pipeline layout
 		VkPipelineLayoutCreateInfo pipeline_layout_create_info = {};
 		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		// TODO: Part 2e
 		pipeline_layout_create_info.setLayoutCount = 1;
 		pipeline_layout_create_info.pSetLayouts = &descriptorLayout;
-		// TODO: Part 3c
+
 		VkPushConstantRange data = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(unsigned int) };
 		pipeline_layout_create_info.pushConstantRangeCount = 1;
 		pipeline_layout_create_info.pPushConstantRanges = &data;
 		vkCreatePipelineLayout(device, &pipeline_layout_create_info,
 							   nullptr, &pipelineLayout);
+
 		// Pipeline State... (FINALLY) 
 		VkGraphicsPipelineCreateInfo pipeline_create_info = {};
 		pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -380,8 +370,8 @@ public:
 
 	void Render() {
 		// TODO: Part 2a
-		//GW::MATH::GMatrix::RotateYGlobalF(instanceData.matricies[0], 0.0001f, instanceData.matricies[0]);
-
+		GW::MATH::GMatrix::RotateYGlobalF(rotatingMatrix, 0.00025f, rotatingMatrix);
+		
 		// TODO: Part 4d
 		// grab the current Vulkan commandBuffer
 		unsigned int currentBuffer;
@@ -410,6 +400,9 @@ public:
 		// TODO: Part 1h
 		vkCmdBindIndexBuffer(commandBuffer, indexHandle, 0, VK_INDEX_TYPE_UINT32);
 		// TODO: Part 4d
+		instanceData.matricies[1] = rotatingMatrix;
+
+		
 		// TODO: Part 2i
 		// TODO: Part 3b
 		// TODO: Part 3d
@@ -417,6 +410,7 @@ public:
 			auto indexCount = FSLogo_meshes[i].indexCount;
 			auto offset = FSLogo_meshes[i].indexOffset;
 			auto matId = FSLogo_meshes[i].materialIndex;
+			GvkHelper::write_to_buffer(device, storageData[i], &instanceData, sizeof(SHADER_MODEL_DATA));
 
 			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(matId), &matId);
 

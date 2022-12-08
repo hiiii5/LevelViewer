@@ -17,22 +17,47 @@ struct OBJ_ATTRIBUTES {
 };
 
 struct SHADER_MODEL_DATA {
-  float4 sunDirection;
-  float4 sunColor;
-  matrix viewMatrix;
-  matrix projectionMatrix;
-  matrix matricies[1024];
-  OBJ_ATTRIBUTES attributes[1024];
+	float4 sunDirection;
+	float4 sunColor;
+    float4 eyePos;
+	matrix viewMatrix;
+	matrix projectionMatrix;
+	matrix matricies[1024];
+	OBJ_ATTRIBUTES attributes[1024];
 };
 
 StructuredBuffer<SHADER_MODEL_DATA> shaderData;
 
-float4 lambert(float4 lightColor, float4 ambientColor, float4 lightDir, float4 nrm) {
-    float4 lightNormal = normalize(lightDir);
-    float4 normalizedNormal = normalize(nrm);
+float3 lambert(float3 lightColor, float3 lightDir, float3 nrm)
+{
+    // Get the inverse normalized light direction.
+    const float3 lightNormal = -normalize(lightDir);
+
+    // Make sure the input normal is normalized.
+    const float3 normalizedNormal = normalize(nrm);
+
+    // Determine how much light is reflected off of the diffuse from the light direction.
     float lightDiffuseNormal = dot(lightNormal, normalizedNormal);
+
+    // Don't let anything fall out of the minimum range.
     lightDiffuseNormal = max(lightDiffuseNormal, 0);
-    return lightDiffuseNormal * lightColor + ambientColor;
+
+    // Colorize the lighting with the light color.
+    return lightDiffuseNormal * lightColor;
+}
+
+float specular(float3 lightColor, float3 lightDir, float3 nrmW, float3 view, float specularExp) {
+	// Calculate specular lighting
+    const float3 r = reflect(normalize(lightDir), normalize(nrmW));
+
+    // Get the amount of light reflected back to the camera.
+    float spec = pow(saturate(dot(r, normalize(view))), specularExp);
+
+    // Ensure spec doesn't fall below 0, causing incorrect lighting.
+    spec = max(spec, 0);
+
+    // Colorize the specular lighting by the light color.
+    return lightColor * spec;
 }
 
 // TODO: Part 4g
@@ -40,14 +65,28 @@ float4 lambert(float4 lightColor, float4 ambientColor, float4 lightDir, float4 n
 // TODO: Part 3e
 // an ultra simple hlsl pixel shader
 // TODO: Part 4b
-float4 main(float4 posH : SV_POSITION, float4 nrmW : NORMAL, float4 posW : WORLD) : SV_TARGET {
-	float4 surfaceColor = float4(shaderData[0].attributes[mesh_ID].Kd, 0); // TODO: Part 1a
-    float4 ambientColor = float4(0.1f, 0.1f, 0.1f, 0);
+float4 main(float4 posH : SV_POSITION, float4 nrmW : NORMAL, float4 posW : WORLD, float4 view : VIEW_DIR) : SV_TARGET {
+	 // TODO: Part 1a
+    const float3 ambientColor = float3(0.25f, 0.25f, 0.35f);
+    const float3 diffuse = shaderData[0].attributes[mesh_ID].Kd;
+    const float3 specReflectance = shaderData[0].attributes[mesh_ID].Ks;
+    const float3 ambientReflectance = shaderData[0].attributes[mesh_ID].Ka;
+    const float specularExp = shaderData[0].attributes[mesh_ID].Ns;
 
-    float4 lambertRet = lambert(shaderData[0].sunColor, ambientColor, -shaderData[0].sunDirection, nrmW);
-    float4 directionalResult = lambertRet * surfaceColor;
-	
-    return directionalResult;
+    // Calculate lambert lighting 
+    float3 lamb = lambert(shaderData[0].sunColor.rgb, shaderData[0].sunDirection.xyz, nrmW.xyz);
+
+    // Calculate specular lighting.
+    const float3 spec = specular(shaderData[0].sunColor.rgb, 
+		shaderData[0].sunDirection.xyz, 
+		nrmW.xyz, 
+		view.xyz,specularExp);
+
+    float3 final = diffuse * ambientColor * ambientReflectance; // Add ambient light.
+	final += diffuse * lamb; // Add lambert diffuse lighting.
+    final += specReflectance * spec; // Add specular reflectance lighting.
+
+    return float4(final, 1); // Convert final to a float4.
 	// TODO: Part 3a
 	// TODO: Part 4c
 	// TODO: Part 4g (half-vector or reflect method your choice)

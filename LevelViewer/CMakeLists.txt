@@ -6,13 +6,23 @@ project(Assignment_2_Vulkan)
 ADD_DEFINITIONS(-DUNICODE)
 ADD_DEFINITIONS(-D_UNICODE)
 
+file(GLOB SOURCES
+	./*.h
+	./*.cpp
+)
+
+file(GLOB SHADERS
+	./*.hlsl
+)
+
 if (WIN32)
 	# shaderc_combined.lib in Vulkan requires this for debug & release (runtime shader compiling)
 	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MD")
-	add_executable (Assignment_2_Vulkan main.cpp renderer.h FSLogo.h vs.hlsl ps.hlsl)
+	add_executable (Assignment_2_Vulkan ${SOURCES} ${SHADERS})
 	target_include_directories(Assignment_2_Vulkan PUBLIC $ENV{VULKAN_SDK}/Include/)
 	target_link_directories(Assignment_2_Vulkan PUBLIC $ENV{VULKAN_SDK}/Lib/)
 endif(WIN32)
+
 
 if(UNIX AND NOT APPLE)
 	# libshaderc_combined.a is required for runtime shader compiling
@@ -27,7 +37,8 @@ if(UNIX AND NOT APPLE)
 	# the path is (properly)hardcoded because "${Vulkan_LIBRARY}" currently does not 
 	# return a proper path on MacOS (it has the .dynlib appended)
     link_libraries(/usr/lib/x86_64-linux-gnu/libshaderc_combined.a)
-    add_executable (Assignment_2_Vulkan main.cpp renderer.h FSLogo.h)
+	
+    add_executable (Assignment_2_Vulkan ${SOURCES} ${SHADERS})
 endif(UNIX AND NOT APPLE)
 
 if(APPLE)
@@ -44,18 +55,7 @@ if(APPLE)
 	add_executable (Assignment_2_Vulkan main.mm)
 endif(APPLE)
 
-set_source_files_properties( vs.hlsl PROPERTIES
-        VS_SHADER_TYPE Vertex 
-        VS_SHADER_MODEL 5.0
-        VS_SHADER_ENTRYPOINT main
-        VS_TOOL_OVERRIDE "None" 
-	# Tip: Swap "None" for "FXCompile" to have them actually be compiled by VS.(Great for D3D11/12)
-)
-
-set_source_files_properties( ps.hlsl PROPERTIES
-        VS_SHADER_TYPE Pixel 
-        VS_SHADER_MODEL 5.0
-        VS_SHADER_ENTRYPOINT main
+set_source_files_properties( ${SHADERS} PROPERTIES
         VS_TOOL_OVERRIDE "None" 
 	# Tip: Swap "None" for "FXCompile" to have them actually be compiled by VS.(Great for D3D11/12)
 )

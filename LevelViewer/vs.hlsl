@@ -30,6 +30,7 @@ struct OBJ_ATTRIBUTES {
 struct SHADER_MODEL_DATA {
 	float4 sunDirection;
 	float4 sunColor;
+    float4 eyePos;
 	matrix viewMatrix;
 	matrix projectionMatrix;
 	matrix matricies[1024];
@@ -42,12 +43,12 @@ struct OUTPUT_TO_RASTERIZER {
 	float4 posH : SV_POSITION;
 	float4 nrmW : NORMAL;
 	float4 posW : WORLD;
+    float4 view : VIEW_DIR;
 };
 
 OUTPUT_TO_RASTERIZER main(float4 pos : POSITION, float2 uv : UV, float4 norm)
 {
-    matrix model = shaderData[0].matricies[0];
-    matrix inverse = shaderData[0].matricies[1];
+    matrix model = shaderData[0].matricies[mesh_ID];
     matrix view = shaderData[0].viewMatrix;
     matrix projection = shaderData[0].projectionMatrix;
     float4 v = float4(pos.xyz, 1);
@@ -64,8 +65,9 @@ OUTPUT_TO_RASTERIZER main(float4 pos : POSITION, float2 uv : UV, float4 norm)
 	// TODO: Part 4e
 	// TODO: Part 4b
 	// TODO: Part 4e
-    output.nrmW = mul(norm, inverse);
-	output.posW = pos;
+    output.nrmW = mul(float4(norm.xyz, 0.0f), model);
+    output.posW = mul(v, model);
+    output.view = normalize(shaderData[0].eyePos - output.posW);
 
 	return output;
 }
