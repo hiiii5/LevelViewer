@@ -1,2 +1,8 @@
-﻿*.blend1
+﻿# Ignore the build folder, this can be created at a moments notice.
 LevelViewer/build
+
+# Ignore blender files, this will only change by explicit update.
+*.blend
+
+# Ignore pure ref files for concept, this will no longer change.
+*.pur
