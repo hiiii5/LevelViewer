@@ -1,12 +1,4 @@
-// TODO: 2i
 // an ultra simple hlsl vertex shader
-// TODO: Part 2b
-// TODO: Part 4g
-// TODO: Part 2i
-// TODO: Part 3e
-// TODO: Part 4a
-// TODO: Part 1f
-// TODO: Part 4b
 #pragma pack_matrix(row_major)
 
 [[vk::push_constant]]

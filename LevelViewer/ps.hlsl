@@ -1,4 +1,3 @@
-// TODO: Part 2b
 #pragma pack_matrix(row_major)
 
 [[vk::push_constant]] cbuffer MESH_INDEX { uint mesh_ID; };
@@ -60,11 +59,7 @@ float specular(float3 lightColor, float3 lightDir, float3 nrmW, float3 view, flo
     return lightColor * spec;
 }
 
-// TODO: Part 4g
-// TODO: Part 2i
-// TODO: Part 3e
 // an ultra simple hlsl pixel shader
-// TODO: Part 4b
 float4 main(float4 posH : SV_POSITION, float4 nrmW : NORMAL, float4 posW : WORLD, float4 view : VIEW_DIR) : SV_TARGET {
 	 // TODO: Part 1a
     const float3 ambientColor = float3(0.25f, 0.25f, 0.35f);

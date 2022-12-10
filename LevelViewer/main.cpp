@@ -11,7 +11,7 @@
 #define GATEWARE_DISABLE_GOPENGLSURFACE // we have another template for this
 // With what we want & what we don't defined we can include the API
 #include "../gateware/Gateware.h"
-#include "renderer.h"
+//#include "renderer.h"
 // open some namespaces to compact the code a bit
 using namespace GW;
 using namespace CORE;
@@ -49,7 +49,7 @@ int main()
 		if (+vulkan.Create(win, GW::GRAPHICS::DEPTH_BUFFER_SUPPORT))
 #endif
 		{
-			Renderer renderer(win, vulkan);
+			/*Renderer renderer(win, vulkan);
 			while (+win.ProcessWindowEvents())
 			{
 				if (+vulkan.StartFrame(2, clrAndDepth))
@@ -57,7 +57,7 @@ int main()
 					renderer.Render();
 					vulkan.EndFrame(true);
 				}
-			}
+			}*/
 		}
 	}
 	return 0; // that's all folks
