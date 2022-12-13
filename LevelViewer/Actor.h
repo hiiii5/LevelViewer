@@ -1,18 +1,18 @@
 #pragma once
 
-#define GATEWARE_ENABLE_GRAPHICS
-#include "../gateware/Gateware.h"
-
-#include "Mesh.h"
+#include "Globals.h"
 
 class Actor {
 public:
     explicit Actor(const char* MeshFile);
     ~Actor();
-    
-    Mesh* MeshAsset;
+
+    void Destroy() const;
+
+    std::string Name;
+    Mesh* MeshComp{};
     GW::MATH::GMATRIXF Transform{};
 
-    void Render();
+    void Render() const;
 };
 

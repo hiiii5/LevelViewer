@@ -9,6 +9,7 @@ ADD_DEFINITIONS(-D_UNICODE)
 file(GLOB SOURCES
 	./*.h
 	./*.cpp
+	#./main.cpp #Fix for checking if a window will spawn.
 )
 
 file(GLOB SHADERS

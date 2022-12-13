@@ -1,62 +1,71 @@
-#include "renderer.h"
+#include "Globals.h"
 
-void Renderer::InitRenderer(GW::SYSTEM::GWindow _win, GW::GRAPHICS::GVulkanSurface _vlk) {
+void Renderer::UpdateStorageBuffers(VkPhysicalDevice physicalDevice, unsigned& maxFrames, bool create) {
+	vlk.GetSwapchainImageCount(maxFrames);
+
+	if(StorageHandle.size() < maxFrames) {
+		StorageHandle.resize(maxFrames);
+	}
+	if(StorageData.size() < maxFrames) {
+		StorageData.resize(maxFrames);
+	}
+
+	// For every frame, make a matching buffer to hold initial data for the shaders.
+	for (unsigned int i = 0; i < maxFrames; i++) {
+		if(create) {
+			GvkHelper::create_buffer(physicalDevice, Device, sizeof(SHADER_MODEL_DATA),
+								 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+								 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &StorageHandle[i], &StorageData[i]);
+		}
+		GvkHelper::write_to_buffer(Device, StorageData[i], &InstanceData, sizeof(SHADER_MODEL_DATA));
+	}
+}
+
+void Renderer::Init(GW::SYSTEM::GWindow _win, GW::GRAPHICS::GVulkanSurface _vlk) {
 	win = _win;
 	vlk = _vlk;
 	unsigned int width, height;
 	win.GetClientWidth(width);
 	win.GetClientHeight(height);
 
-	A = new Actor("../test.h2b");
+	Input.Create(win);
+	Controller.Create();
 
-	instanceData.Transforms[0] = GW::MATH::GIdentityMatrixF;
+	InstanceData.Transforms[0] = GW::MATH::GIdentityMatrixF;
 
-	instanceData.ViewMatrix = GW::MATH::GIdentityMatrixF;
-	instanceData.EyePos = { 0.75f, 0.25f, -3.5f };
+	InstanceData.ViewMatrix = GW::MATH::GIdentityMatrixF;
+	InstanceData.EyePos = { 0.75f, 0.25f, -3.5f };
 	GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f };
 
-	GW::MATH::GMatrix::TranslateGlobalF(instanceData.ViewMatrix, instanceData.EyePos, instanceData.ViewMatrix);
+	GW::MATH::GMatrix::TranslateGlobalF(InstanceData.ViewMatrix, InstanceData.EyePos, InstanceData.ViewMatrix);
 
 	GW::MATH::GVECTORF lookAtPos{ 0.0f, 0.0f, 0.0f };
 
-	GW::MATH::GMatrix::LookAtLHF(instanceData.EyePos, lookAtPos, up, instanceData.ViewMatrix);
+	GW::MATH::GMatrix::LookAtLHF(InstanceData.EyePos, lookAtPos, up, InstanceData.ViewMatrix);
 
 	float aspectRatio;
 	vlk.GetAspectRatio(aspectRatio);
-	GW::MATH::GMatrix::ProjectionVulkanLHF(65.0f * (3.14159f / 180.0f), aspectRatio, 0.1f, 100.0f, instanceData.ProjectionMatrix);
-	for (int i = 0; i < A->MeshAsset->MaterialCount; i++) {
-		instanceData.Attributes[i] = A->MeshAsset->Materials[i].attrib;
-	}
 
-	instanceData.SunColor = {0.9f, 0.9f, 1.0f, 1.0f};
-	instanceData.SunDirection = {-1, -1, 2};
-	GW::MATH::GVector::NormalizeF(instanceData.SunDirection, instanceData.SunDirection);
+	InstanceData.ProjectionMatrix = GetDefaultProjectionMatrix();
+	InstanceData.SunColor = {0.9f, 0.9f, 1.0f, 1.0f};
+	InstanceData.SunDirection = {-1, -1, 2};
+	GW::MATH::GVector::NormalizeF(InstanceData.SunDirection, InstanceData.SunDirection);
 
 	/***************** GEOMETRY INTIALIZATION ******************/
 	// Grab the device & physical device so we can allocate some stuff
-	VkPhysicalDevice physicalDevice = nullptr;
-	vlk.GetDevice((void**)&device);
-	vlk.GetPhysicalDevice((void**)&physicalDevice);
+	vlk.GetPhysicalDevice((void**)&PhysicalDevice);
+	vlk.GetDevice((void**)&Device);
 
-	// Prepare mesh for display, this is the default cubemesh TODO: REMOVE
-	InitMesh(device, physicalDevice, *A->MeshAsset);
+	CurrentLevel = Level();
+	CurrentLevel.Load("../GameLevel.txt");
 
-	// Get the number of frames the gpu has on hand.
-	unsigned int maxFrames;
-	vlk.GetSwapchainImageCount(maxFrames);
-	storageHandle.resize(maxFrames);
-	storageData.resize(maxFrames);
-
-	// For every frame, make a matching buffer to hold initial data for the shaders.
-	for (unsigned int i = 0; i < maxFrames; i++) {
-		GvkHelper::create_buffer(physicalDevice, device, sizeof(SHADER_MODEL_DATA),
-								 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-								 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &storageHandle[i], &storageData[i]);
-		GvkHelper::write_to_buffer(device, storageData[i], &instanceData, sizeof(SHADER_MODEL_DATA));
-	}
+	unsigned maxFrames;
+	UpdateStorageBuffers(PhysicalDevice, maxFrames, true);
 
 	/***************** SHADER INTIALIZATION ******************/
-	CompileShader(device, "../vs.hlsl", "../ps.hlsl", S);
+	auto S = Shader{ "../vs.hlsl", "../ps.hlsl" };
+	CompileShader(S, Device);
+	Shaders.insert({"DefaultShader", S});
 
 	/***************** PIPELINE INTIALIZATION ******************/
 	InitPipeline(width, height, maxFrames);
@@ -79,13 +88,13 @@ void Renderer::InitPipeline(unsigned width, unsigned height, unsigned maxFrames)
 	// Create Stage Info for Vertex Shader
 	stage_create_info[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	stage_create_info[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-	stage_create_info[0].module = S.VertShader;
+	stage_create_info[0].module = Shaders["DefaultShader"].VertShader;
 	stage_create_info[0].pName = "main";
 
 	// Create Stage Info for Fragment Shader
 	stage_create_info[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	stage_create_info[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	stage_create_info[1].module = S.PixShader;
+	stage_create_info[1].module = Shaders["DefaultShader"].PixShader;
 	stage_create_info[1].pName = "main";
 
 	// Assembly State
@@ -205,7 +214,7 @@ void Renderer::InitPipeline(unsigned width, unsigned height, unsigned maxFrames)
 	descriptorCreateInfo.bindingCount = 1;
 	descriptorCreateInfo.pBindings = &descriptorLayoutBinding;
 	descriptorCreateInfo.pNext = nullptr;
-	vkCreateDescriptorSetLayout(device, &descriptorCreateInfo, nullptr, &descriptorLayout);
+	vkCreateDescriptorSetLayout(Device, &descriptorCreateInfo, nullptr, &DescriptorLayout);
 
 	VkDescriptorPoolCreateInfo poolCreateInfo{};
 	poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -215,17 +224,17 @@ void Renderer::InitPipeline(unsigned width, unsigned height, unsigned maxFrames)
 	poolCreateInfo.maxSets = maxFrames;
 	poolCreateInfo.flags = 0;
 	poolCreateInfo.pNext = nullptr;
-	vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &descriptorPool);
+	vkCreateDescriptorPool(Device, &poolCreateInfo, nullptr, &DescriptorPool);
 
 	VkDescriptorSetAllocateInfo allocateInfo{};
 	allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 	allocateInfo.descriptorSetCount = 1;
-	allocateInfo.pSetLayouts = &descriptorLayout;
-	allocateInfo.descriptorPool = descriptorPool;
+	allocateInfo.pSetLayouts = &DescriptorLayout;
+	allocateInfo.descriptorPool = DescriptorPool;
 	allocateInfo.pNext = nullptr;
-	descriptorSet.resize(maxFrames);
+	DescriptorSet.resize(maxFrames);
 	for (unsigned int i = 0; i < maxFrames; i++) {
-		vkAllocateDescriptorSets(device, &allocateInfo, &descriptorSet[i]);
+		vkAllocateDescriptorSets(Device, &allocateInfo, &DescriptorSet[i]);
 	}
 
 	VkWriteDescriptorSet shaderWriteDescriptorSet{};
@@ -235,23 +244,23 @@ void Renderer::InitPipeline(unsigned width, unsigned height, unsigned maxFrames)
 	shaderWriteDescriptorSet.dstBinding = 0;
 	shaderWriteDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	for (unsigned int i = 0; i < maxFrames; i++) {
-		shaderWriteDescriptorSet.dstSet = descriptorSet[i];
-		VkDescriptorBufferInfo dbinfo = { storageHandle[i], 0, VK_WHOLE_SIZE };
+		shaderWriteDescriptorSet.dstSet = DescriptorSet[i];
+		VkDescriptorBufferInfo dbinfo = { StorageHandle[i], 0, VK_WHOLE_SIZE };
 		shaderWriteDescriptorSet.pBufferInfo = &dbinfo;
-		vkUpdateDescriptorSets(device, 1, &shaderWriteDescriptorSet, 0, nullptr);
+		vkUpdateDescriptorSets(Device, 1, &shaderWriteDescriptorSet, 0, nullptr);
 	}
 
 	// Descriptor pipeline layout
 	VkPipelineLayoutCreateInfo pipeline_layout_create_info = {};
 	pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	pipeline_layout_create_info.setLayoutCount = 1;
-	pipeline_layout_create_info.pSetLayouts = &descriptorLayout;
+	pipeline_layout_create_info.pSetLayouts = &DescriptorLayout;
 
 	VkPushConstantRange data = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(unsigned int) };
 	pipeline_layout_create_info.pushConstantRangeCount = 1;
 	pipeline_layout_create_info.pPushConstantRanges = &data;
-	vkCreatePipelineLayout(device, &pipeline_layout_create_info,
-		nullptr, &pipelineLayout);
+	vkCreatePipelineLayout(Device, &pipeline_layout_create_info,
+		nullptr, &PipelineLayout);
 
 	// Pipeline State... (FINALLY) 
 	VkGraphicsPipelineCreateInfo pipeline_create_info = {};
@@ -266,28 +275,28 @@ void Renderer::InitPipeline(unsigned width, unsigned height, unsigned maxFrames)
 	pipeline_create_info.pDepthStencilState = &depth_stencil_create_info;
 	pipeline_create_info.pColorBlendState = &color_blend_create_info;
 	pipeline_create_info.pDynamicState = &dynamic_create_info;
-	pipeline_create_info.layout = pipelineLayout;
+	pipeline_create_info.layout = PipelineLayout;
 	pipeline_create_info.renderPass = renderPass;
 	pipeline_create_info.subpass = 0;
 	pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
-	vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
-		&pipeline_create_info, nullptr, &pipeline);
+	vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1,
+		&pipeline_create_info, nullptr, &Pipeline);
 }
 
-void Renderer::InitMesh(const VkDevice Device, const VkPhysicalDevice PhysicalDevice, Mesh& Target) {
+void Renderer::CompileMesh(Mesh* Target) {
 	// Transfer triangle data to the vertex buffer. (staging would be prefered here)
-	GvkHelper::create_buffer(PhysicalDevice, Device, sizeof(H2B::VERTEX) * Target.VertexCount,
+	GvkHelper::create_buffer(PhysicalDevice, Device, sizeof(H2B::VERTEX) * Target->VertexCount,
 							 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &Target.VertexHandle, &Target.VertexData);
-	GvkHelper::write_to_buffer(Device, Target.VertexData, &Target.Vertices[0], sizeof(H2B::VERTEX) * Target.VertexCount);
+							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &Target->VertexHandle, &Target->VertexData);
+	GvkHelper::write_to_buffer(Device, Target->VertexData, &Target->Vertices[0], sizeof(H2B::VERTEX) * Target->VertexCount);
 
-	GvkHelper::create_buffer(PhysicalDevice, Device, sizeof(unsigned) * Target.IndexCount,
+	GvkHelper::create_buffer(PhysicalDevice, Device, sizeof(unsigned) * Target->IndexCount,
 							 VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &Target.IndexHandle, &Target.IndexData);
-	GvkHelper::write_to_buffer(Device, Target.IndexData, &Target.Indices[0], sizeof(unsigned) * Target.IndexCount);
+							 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &Target->IndexHandle, &Target->IndexData);
+	GvkHelper::write_to_buffer(Device, Target->IndexData, &Target->Indices[0], sizeof(unsigned) * Target->IndexCount);
 }
 
-void Renderer::CompileShader(const VkDevice& Device, const char* VsFile, const char* PsFile, Shader& ShaderRef) {
+void Renderer::CompileShader(Shader& ShaderRef, const VkDevice& Device) {
 	// Intialize runtime shader compiler HLSL -> SPIRV
 	shaderc_compiler_t compiler = shaderc_compiler_initialize();
 	shaderc_compile_options_t options = shaderc_compile_options_initialize();
@@ -297,7 +306,7 @@ void Renderer::CompileShader(const VkDevice& Device, const char* VsFile, const c
 	shaderc_compile_options_set_generate_debug_info(options);
 #endif
 	// Create Vertex Shader
-	std::string vsShader = ShaderParser::ShaderAsString(VsFile);
+	std::string vsShader = ShaderParser::ShaderAsString(ShaderRef.VsFile.c_str());
 	shaderc_compilation_result_t result = shaderc_compile_into_spv( // compile
 		compiler, vsShader.c_str(), strlen(vsShader.c_str()),
 		shaderc_vertex_shader, "main.vert", "main", options);
@@ -307,7 +316,7 @@ void Renderer::CompileShader(const VkDevice& Device, const char* VsFile, const c
 									(char*)shaderc_result_get_bytes(result), &ShaderRef.VertShader);
 	shaderc_result_release(result); // done
 	// Create Pixel Shader
-	std::string psShader = ShaderParser::ShaderAsString(PsFile);
+	std::string psShader = ShaderParser::ShaderAsString(ShaderRef.PsFile.c_str());
 	result = shaderc_compile_into_spv( // compile
 		compiler, psShader.c_str(), strlen(psShader.c_str()),
 		shaderc_fragment_shader, "main.frag", "main", options);
@@ -321,19 +330,22 @@ void Renderer::CompileShader(const VkDevice& Device, const char* VsFile, const c
 	shaderc_compiler_release(compiler);
 }
 
-void Renderer::RenderActor(const VkCommandBuffer CommandBuffer, const Actor* ActorToRender, const SHADER_MODEL_DATA& InstanceData) {
+void Renderer::RenderActor(const Actor* ActorToRender, const SHADER_MODEL_DATA& CurrentData) {
 	// now we can draw
 	VkDeviceSize offsets[] = { 0 };
-	vkCmdBindVertexBuffers(CommandBuffer, 0, 1, &ActorToRender->MeshAsset->VertexHandle, offsets);
-	vkCmdBindIndexBuffer(CommandBuffer, ActorToRender->MeshAsset->IndexHandle, 0, VK_INDEX_TYPE_UINT32);
+	VkCommandBuffer CommandBuffer;
+	unsigned int currentBuffer;
+	GetCurrentBuffers(currentBuffer, CommandBuffer);
+	vkCmdBindVertexBuffers(CommandBuffer, 0, 1, &ActorToRender->MeshComp->VertexHandle, offsets);
+	vkCmdBindIndexBuffer(CommandBuffer, ActorToRender->MeshComp->IndexHandle, 0, VK_INDEX_TYPE_UINT32);
 
-	for (unsigned int i = 0; i < ActorToRender->MeshAsset->MeshCount; ++i) {
-		const auto indexCount = ActorToRender->MeshAsset->Batches[i].indexCount;
-		const auto offset = ActorToRender->MeshAsset->Batches[i].indexOffset;
-		auto matId = ActorToRender->MeshAsset->Meshes[i].materialIndex;
-		GvkHelper::write_to_buffer(device, storageData[i], &InstanceData, sizeof(SHADER_MODEL_DATA));
+	for (unsigned int i = 0; i < ActorToRender->MeshComp->MeshCount; ++i) {
+		const auto indexCount = ActorToRender->MeshComp->Batches[i].indexCount;
+		const auto offset = ActorToRender->MeshComp->Batches[i].indexOffset;
+		auto matId = ActorToRender->MeshComp->Meshes[i].materialIndex;
+		GvkHelper::write_to_buffer(Device, StorageData[i], &CurrentData, sizeof(SHADER_MODEL_DATA));
 
-		vkCmdPushConstants(CommandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(matId), &matId);
+		vkCmdPushConstants(CommandBuffer, PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(matId), &matId);
 
 		vkCmdDrawIndexed(CommandBuffer, indexCount, 1, offset, 0, 0);
 	}
@@ -345,10 +357,12 @@ void Renderer::GetCurrentBuffers(unsigned& CurrentBuffer, VkCommandBuffer& Comma
 }
 
 SHADER_MODEL_DATA Renderer::GetWorldShaderData() const {
-	return instanceData;
+	return InstanceData;
 }
 
 void Renderer::Render() {
+	Start = std::chrono::high_resolution_clock::now();
+
 	unsigned currentBuffer;
 	VkCommandBuffer commandBuffer;
 	GetCurrentBuffers(currentBuffer, commandBuffer);
@@ -358,54 +372,93 @@ void Renderer::Render() {
 	win.GetClientWidth(width);
 	win.GetClientHeight(height);
 
-	// setup the pipeline's dynamic settings
+	// setup the pipeline'S dynamic settings
 	VkViewport viewport = {
 		0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
 	};
 	VkRect2D scissor = {{0, 0}, {width, height}};
+
+	// Cut the viewport rect for viewing.
 	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-	vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-							0, 1, &descriptorSet[currentBuffer], 0, nullptr);
-		
-	A->Render();
+	// Bind to the current pipeline.
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, Pipeline);
+
+	// Bind to that pipelines information.
+	vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, PipelineLayout,
+							0, 1, &DescriptorSet[currentBuffer], 0, nullptr);
+
+	// Render the current level.
+	CurrentLevel.Render(InstanceData);
+
+	Stop = std::chrono::high_resolution_clock::now();
+
+	using ms = std::chrono::duration<float, std::milli>;
+	DeltaTime = std::chrono::duration_cast<ms>(Stop - Start).count();
+}
+
+void Renderer::Update() {
+	unsigned maxFrames;
+	UpdateStorageBuffers(PhysicalDevice, maxFrames, false);
+	Player.Move();
 }
 
 void Renderer::DeallocateMesh(const Mesh* MeshToDestroy) const {
-	vkDestroyBuffer(device, MeshToDestroy->IndexHandle, nullptr);
-	vkFreeMemory(device, MeshToDestroy->IndexData, nullptr);
-	vkDestroyBuffer(device, MeshToDestroy->VertexHandle, nullptr);
-	vkFreeMemory(device, MeshToDestroy->VertexData, nullptr);
+	if(!MeshToDestroy) return;
+
+	if(MeshToDestroy->IndexHandle != nullptr) 
+		vkDestroyBuffer(Device, MeshToDestroy->IndexHandle, nullptr);
+	if (MeshToDestroy->IndexData != nullptr)
+		vkFreeMemory(Device, MeshToDestroy->IndexData, nullptr);
+	if (MeshToDestroy->VertexHandle != nullptr)
+		vkDestroyBuffer(Device, MeshToDestroy->VertexHandle, nullptr);
+	if (MeshToDestroy->VertexData != nullptr)
+		vkFreeMemory(Device, MeshToDestroy->VertexData, nullptr);
 }
 
 void Renderer::DeallocateShader(const Shader& ShaderToDestroy) const {
-	vkDestroyShaderModule(device, ShaderToDestroy.VertShader, nullptr);
-	vkDestroyShaderModule(device, ShaderToDestroy.PixShader, nullptr);
+	vkDestroyShaderModule(Device, ShaderToDestroy.VertShader, nullptr);
+	vkDestroyShaderModule(Device, ShaderToDestroy.PixShader, nullptr);
 }
 
 void Renderer::CleanUp() {
 	// wait till everything has completed
-	vkDeviceWaitIdle(device);
+	vkDeviceWaitIdle(Device);
 	// Release allocated buffers, shaders & pipeline
-	DeallocateMesh(A->MeshAsset);
-	DeallocateShader(S);
-	delete A;
 
-	for (const auto buffer : storageHandle) {
-		vkDestroyBuffer(device, buffer, nullptr);
+	CurrentLevel.Destroy();
+
+	for (const auto& pair : Shaders) {
+		DeallocateShader(pair.second);
+	}
+	Shaders.clear();
+
+	for (const auto buffer : StorageHandle) {
+		vkDestroyBuffer(Device, buffer, nullptr);
 	}
 
-	for (const auto handle : storageData) {
-		vkFreeMemory(device, handle, nullptr);
+	for (const auto handle : StorageData) {
+		vkFreeMemory(Device, handle, nullptr);
 	}
 		
-	vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+	vkDestroyDescriptorSetLayout(Device, DescriptorLayout, nullptr);
 
-	vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-	vkDestroyPipeline(device, pipeline, nullptr);
+	vkDestroyDescriptorPool(Device, DescriptorPool, nullptr);
+	vkDestroyPipelineLayout(Device, PipelineLayout, nullptr);
+	vkDestroyPipeline(Device, Pipeline, nullptr);
 }
 
-Renderer* Renderer::InstPtr = nullptr;
+GW::MATH::GMATRIXF Renderer::GetDefaultProjectionMatrix() const {
+	float aspectRatio;
+	vlk.GetAspectRatio(aspectRatio);
+	GW::MATH::GMATRIXF ret = GW::MATH::GIdentityMatrixF;
+	GW::MATH::GMatrix::ProjectionVulkanLHF(65.0f * (3.14159f / 180.0f), aspectRatio, 0.1f, 100.0f, ret);
+	return ret;
+}
+
+void Renderer::GetWindowResolution(unsigned& Width, unsigned& Height) const {
+	win.GetClientWidth(Width);
+	win.GetClientHeight(Height);
+}
+

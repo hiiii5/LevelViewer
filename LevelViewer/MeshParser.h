@@ -1,6 +1,5 @@
 #pragma once
-#include "h2bParser.h"
-#include "Mesh.h"
+#include "Globals.h"
 
 class Mesh;
 

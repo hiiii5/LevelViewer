@@ -7,3 +7,7 @@ LevelViewer/build
 # Ignore pure ref files for concept, this will no longer change.
 *.pur
 *.blend1
+*.h2b
+Meshes/*.h
+Meshes/*.obj
+Meshes/*.mtl
